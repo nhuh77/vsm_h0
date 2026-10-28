@@ -145,11 +145,11 @@ def main() -> int:
     if not isinstance(data, dict) or data.get("is_error") or data.get("subtype") != "success":
         print(f"claude 결과가 성공이 아니다: {data.get('result') if isinstance(data, dict) else data}", file=sys.stderr)
         return 1
+    # 거부된 호출은 실행되지 않았다. 실패로 두지 않고 기록만 남긴다(허용 목록이 막은 것이므로 게시·쓰기는 일어나지 않았다).
     denials = data.get("permission_denials") or []
     if denials:
-        names = sorted({str(d.get("tool_name")) if isinstance(d, dict) else str(d) for d in denials})
-        print(f"허용하지 않은 도구를 쓰려 했다: {', '.join(names)}", file=sys.stderr)
-        return 1
+        (out_dir / "denials.json").write_text(json.dumps(denials, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(f"::warning::허용하지 않은 도구 호출 {len(denials)}건이 거부되었다 (review/denials.json)")
     review = extract_review(data)
     if review is None:
         print("structured_output 도 본문의 ```json 블록도 리뷰 형식이 아니다", file=sys.stderr)
