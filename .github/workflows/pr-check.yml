@@ -1,0 +1,80 @@
+# PR 점검 — self-hosted(Windows) 에서 빌드 → 단위테스트 → pr-correctness-reviewer(게시 없음) 를 돌리고
+# 로그 · JUnit XML · 리뷰 JSON 을 아티팩트로 남긴다. test.yml(ubuntu) 과 따로 돌며 서로 영향이 없다.
+# - 권한은 읽기만 준다. gh 는 이 workflow 의 GITHUB_TOKEN 을 GH_TOKEN 으로 써서 읽는다(내 PC 의 gh 로그인은 쓰지 않는다).
+# - 리뷰어는 PR 에 게시하지 않는다. 게시할 리뷰(요약 · 인라인)를 review/review.json 으로만 받는다.
+# - 포크 PR 은 돌리지 않는다(self-hosted 에서 외부 코드가 실행되는 것을 막는다).
+# action 은 GitHub 공식 것만, 커밋 SHA 로 고정한다(test.yml 과 같은 SHA).
+name: pr-check
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: read
+  checks: read
+  statuses: read
+
+# 같은 PR 에 새 푸시가 오면 이전 실행은 취소한다
+concurrency:
+  group: pr-check-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  pr-check:
+    # 포크 PR 차단: head 저장소가 이 저장소일 때만 돈다
+    if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: [self-hosted, Windows, X64]
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+
+      # make.cmd 가 config.bat 으로 C:\Users\Public\vsm-gcc 를 PATH 에 붙인 뒤 mingw32-make 를 부른다.
+      # 로그는 파일로 남기고 화면에도 찍는다. 종료 코드는 make 의 것을 그대로 돌려준다.
+      - name: C 빌드
+        shell: cmd
+        run: |
+          if not exist logs mkdir logs
+          call make.cmd all > logs\build.log 2>&1
+          set RC=%errorlevel%
+          type logs\build.log
+          exit /b %RC%
+
+      # 테스트가 실패하면 이 step 과 job 이 실패한다(그대로 둔다)
+      - name: C 테스트
+        shell: cmd
+        run: |
+          call make.cmd test > logs\test.log 2>&1
+          set RC=%errorlevel%
+          type logs\test.log
+          exit /b %RC%
+
+      # pr_reviewer_h0 clone 폴더에서 claude -p 로 pr-correctness-reviewer 를 부른다. PR 에 게시하지 않는다.
+      # 빌드나 테스트가 실패해도 리뷰는 돌린다(취소된 경우만 건너뛴다).
+      - name: Reviewer (게시 없음)
+        if: ${{ !cancelled() }}
+        shell: cmd
+        working-directory: C:\lab\student\pr_reviewer_h0
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          OUT_DIR: ${{ github.workspace }}\review
+        run: py -I "%GITHUB_WORKSPACE%\.github\scripts\run_reviewer.py"
+
+      # 로그 · XML · 리뷰 JSON 중 하나도 없으면 실패로 둔다(빈 아티팩트로 통과시키지 않는다)
+      - name: 아티팩트
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: pr-check
+          path: |
+            logs/
+            test-results/*.xml
+            review/
+          if-no-files-found: error
