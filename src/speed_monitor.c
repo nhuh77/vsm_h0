@@ -61,5 +61,5 @@ bool sm_is_sudden_drop(uint16_t prev_kph, uint16_t curr_kph)
         return false;
     }
 
-    return (uint16_t)(prev_kph - curr_kph) >= VSM_SUDDEN_DROP_KPH;
+    return (uint16_t)(prev_kph - curr_kph) > VSM_SUDDEN_DROP_KPH;
 }
