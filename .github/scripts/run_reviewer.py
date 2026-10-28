@@ -53,6 +53,47 @@ def build_prompt(pr_number: str, repo: str) -> str:
     )
 
 
+def is_review(obj: object) -> bool:
+    """게시할 리뷰의 모양(REVIEW_SCHEMA)을 갖췄는지 본다."""
+    if not isinstance(obj, dict) or obj.get("event") != "COMMENT":
+        return False
+    if not isinstance(obj.get("commit_id"), str) or not isinstance(obj.get("body"), str):
+        return False
+    comments = obj.get("comments")
+    if not isinstance(comments, list):
+        return False
+    return all(
+        isinstance(c, dict) and isinstance(c.get("path"), str) and c.get("side") == "RIGHT"
+        and isinstance(c.get("body"), str) and type(c.get("line")) is int and c["line"] >= 1
+        for c in comments
+    )
+
+
+def extract_review(data: dict) -> dict | None:
+    """structured_output 이 있으면 그것을, 없으면 본문(result)의 마지막 ```json 블록을 리뷰로 쓴다.
+
+    --agent 와 --json-schema 를 같이 쓰면 structured_output 이 비고 JSON 이 본문에 실리는 경우가 있다.
+    """
+    structured = data.get("structured_output")
+    if is_review(structured):
+        return structured
+    result = data.get("result")
+    if not isinstance(result, str):
+        return None
+    decoder = json.JSONDecoder()
+    for part in reversed(result.split("```json")[1:]):
+        start = part.find("{")
+        if start < 0:
+            continue
+        try:
+            candidate, _ = decoder.raw_decode(part[start:])
+        except json.JSONDecodeError:
+            continue
+        if is_review(candidate):
+            return candidate
+    return None
+
+
 def main() -> int:
     pr_number = os.environ["PR_NUMBER"]
     repo = os.environ["REPO"]
@@ -109,9 +150,9 @@ def main() -> int:
         names = sorted({str(d.get("tool_name")) if isinstance(d, dict) else str(d) for d in denials})
         print(f"허용하지 않은 도구를 쓰려 했다: {', '.join(names)}", file=sys.stderr)
         return 1
-    review = data.get("structured_output")
-    if not isinstance(review, dict):
-        print("structured_output 이 객체가 아니다", file=sys.stderr)
+    review = extract_review(data)
+    if review is None:
+        print("structured_output 도 본문의 ```json 블록도 리뷰 형식이 아니다", file=sys.stderr)
         return 1
 
     (out_dir / "review.json").write_text(json.dumps(review, ensure_ascii=False, indent=2), encoding="utf-8")
