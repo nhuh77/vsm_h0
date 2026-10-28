@@ -80,17 +80,20 @@ def extract_review(data: dict) -> dict | None:
     result = data.get("result")
     if not isinstance(result, str):
         return None
+    # 본문 문자열 안에도 ```json 이 나올 수 있어 쪼개지 않고, 표지가 있는 모든 위치에서 뒤에서부터 디코드해 본다
     decoder = json.JSONDecoder()
-    for part in reversed(result.split("```json")[1:]):
-        start = part.find("{")
-        if start < 0:
-            continue
-        try:
-            candidate, _ = decoder.raw_decode(part[start:])
-        except json.JSONDecodeError:
-            continue
-        if is_review(candidate):
-            return candidate
+    fence = "```json"
+    pos = result.rfind(fence)
+    while pos >= 0:
+        start = result.find("{", pos + len(fence))
+        if start >= 0:
+            try:
+                candidate, _ = decoder.raw_decode(result, start)
+            except json.JSONDecodeError:
+                candidate = None
+            if is_review(candidate):
+                return candidate
+        pos = result.rfind(fence, 0, pos)
     return None
 
 
