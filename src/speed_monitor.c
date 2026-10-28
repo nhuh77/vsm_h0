@@ -52,3 +52,14 @@ uint32_t sm_over_count(void)
 {
     return s_over_count;
 }
+
+bool sm_is_sudden_drop(uint16_t prev_kph, uint16_t curr_kph)
+{
+    /* uint16_t 언더플로 방지: 감소일 때만 뺀다 */
+    if (prev_kph < curr_kph)
+    {
+        return false;
+    }
+
+    return (uint16_t)(prev_kph - curr_kph) >= VSM_SUDDEN_DROP_KPH;
+}
